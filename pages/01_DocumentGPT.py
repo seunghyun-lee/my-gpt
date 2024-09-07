@@ -1,5 +1,5 @@
 import streamlit as st
-from langchain.prompts import ChatPromptTemplate
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.document_loaders import UnstructuredFileLoader
 from langchain.embeddings import CacheBackedEmbeddings, OpenAIEmbeddings
 from langchain.schema.runnable import RunnablePassthrough, RunnableLambda
@@ -8,6 +8,8 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores.faiss import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
+from langchain.memory import ConversationBufferMemory
+from langchain.schema import BaseMessage, HumanMessage, AIMessage
 import time
 
 st.set_page_config(
@@ -28,7 +30,6 @@ class ChatCallbackHandler(BaseCallbackHandler):
         self.message += token
         self.message_box.markdown(self.message)
 
-
 llm = ChatOpenAI(
     temperature=0.1,
     streaming=True,
@@ -36,6 +37,19 @@ llm = ChatOpenAI(
         ChatCallbackHandler(),
     ],
 )
+
+llm_for_memory = ChatOpenAI(
+    temperature=0.1,
+)
+
+@st.cache_resource
+def init_memory():
+    return ConversationBufferMemory(
+        llm=llm_for_memory,
+        max_token_limit=120,
+        memory_key="chat_history",
+        return_message=True,
+    )
 
 @st.cache_resource(show_spinner="Embedding file...")
 def embed_file(file):
@@ -77,6 +91,21 @@ def paint_history():
 def format_docs(docs):
     return "\n\n".join(document.page_content for document in docs)
 
+# Function to convert chat history into a list of message objects
+def load_memory(_):
+    chat_history = memory.load_memory_variables({})["chat_history"]
+    
+    # Convert the string-based chat history into a list of message objects
+    messages = []
+    for msg in chat_history.split("\n"):  # Split by new lines or a suitable delimiter
+        if msg.startswith("Human:"):
+            messages.append(HumanMessage(content=msg.replace("Human:", "").strip()))
+        elif msg.startswith("AI:"):
+            messages.append(AIMessage(content=msg.replace("AI:", "").strip()))
+    return messages
+
+memory = init_memory()
+
 prompt = ChatPromptTemplate.from_messages (
     [
         (
@@ -87,6 +116,7 @@ prompt = ChatPromptTemplate.from_messages (
             Context: {context}
             """,
         ),
+        MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),
     ]
 )
@@ -113,42 +143,23 @@ if file:
     retriever = embed_file(file)
     send_message("I'm ready! Ask away!", "ai", save=False)
     paint_history()
+
     message = st.chat_input("Ask anything about your file...")
     if message:
         send_message(message, "human")
         chain = (
             {
                 "context": retriever | RunnableLambda(format_docs),
-                "question": RunnablePassthrough()
+                "question": RunnablePassthrough(),
+                "chat_history": RunnableLambda(load_memory),
             } 
             | prompt 
             | llm
         )
         with st.chat_message("ai"):
-            chain.invoke(message)
+            response = chain.invoke(message)
+        memory.save_context({"input": message}, {"output": response.content})
 else:
     st.session_state["messages"] = []
+    memory.clear()
     
-
-# if "messages" not in st.session_state:
-#     st.session_state["messages"] = []
-
-# def send_message(message, role, save=True):
-#     with st.chat_message(role):
-#         st.write(message)
-#     if save:
-#         st.session_state["messages"].append({"message": message, "role": role})
-
-# for message in st.session_state["messages"]:
-#     send_message(
-#         message["message"],
-#         message["role"],
-#         save=False
-#     )
-
-# message = st.chat_input("Send a message to the ai")
-
-# if message:
-#     send_message(message, "Human")
-#     time.sleep(1)
-#     send_message(f"You said: {message}", "ai")
