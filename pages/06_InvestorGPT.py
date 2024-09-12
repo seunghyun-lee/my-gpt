@@ -3,6 +3,7 @@ import requests
 import streamlit as st
 from typing import Any, Type
 import yfinance as yf
+from langchain.schema import SystemMessage
 from langchain.chat_models import ChatOpenAI
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -62,7 +63,7 @@ class CompanyIncomeStatementTool(BaseTool):
 class CompanyStockPerformanceTool(BaseTool):
     name="CompanyStockPerformance"
     description="""
-    Use this to get the 1 month performance of a company stock.
+    Use this to get the 2 month performance of a company stock.
     You should enter a stock symbol.
     """
     args_schema: Type[CompanyOverviewArgsSchema] = CompanyOverviewArgsSchema
@@ -76,12 +77,25 @@ agent = initialize_agent(
     verbose=True,
     agent=AgentType.OPENAI_FUNCTIONS,
     handle_parsing_errors=True,
-    tools=[
-        StockMarketSymbolSearchTool(),
-        CompanyOverviewTool(),
+    tools=[        
         CompanyIncomeStatementTool(),
         CompanyStockPerformanceTool(),
+        StockMarketSymbolSearchTool(),
+        CompanyOverviewTool(),
     ],
+    agent_kwargs={
+        "system_message": SystemMessage(
+            content="""
+            You are a hedge fund manager.
+            
+            You evaluate a company and provide your opinion and reasons why the stock is a buy or not.
+            
+            Consider the performance of a stock, the company overview and the income statement.
+            
+            Be assertive in your judgement and recommend the stock or advise the user against it.
+        """
+        )
+    },
 )
 
 st.set_page_config(
